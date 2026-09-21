@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+
+archive/
+*.mat
+*.avi
+
+yolov8n.pt
+
+outputs/figures/
+outputs/predictions/
+models/
