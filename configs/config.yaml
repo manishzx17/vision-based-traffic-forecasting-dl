@@ -1,0 +1,93 @@
+# Centralized Project Configuration for Traffic Flow Prediction
+# YOLOv8 + ByteTrack + Recurrent Neural Networks (LSTM/GRU)
+
+project:
+  name: "traffic-flow-yolo-lstm"
+  version: "0.1.0"
+  description: "Vision-based traffic surveillance forecasting using YOLOv8, ByteTrack, and LSTM/GRU"
+  seed: 42
+
+environment:
+  python_requires: ">=3.9,<3.14"
+  device: "cpu"  # 'cpu', 'cuda', 'mps'
+
+data:
+  raw_video_dir: "archive/video"
+  clip_features_csv: "outputs/tables/traffic_clip_features.csv"
+  timeseries_csv: "outputs/tables/traffic_timeseries.csv"
+  total_observations: 44
+  target_column: "total_vehicle_count"
+
+split:
+  n_train: 31
+  n_val: 7
+  n_test: 6
+  train_ratio: 0.7045
+  val_ratio: 0.1591
+  test_ratio: 0.1364
+  # Target-anchored evaluation window counts (strictly identical across all models)
+  val_eval_windows: 3
+  test_eval_windows: 2
+
+forecasting:
+  lookback: 10
+  horizon: 5
+  lookback_experiments: [5, 10, 20]
+  baselines:
+    - "Persistence"
+    - "Historical Mean"
+    - "SMA-3"
+    - "SMA-5"
+
+perception:
+  yolo_weights: "yolov8n.pt"
+  conf_threshold: 0.25
+  target_class_ids: [2, 5, 7]  # car (2), bus (5), truck (7)
+  tracker_config: "bytetrack.yaml"
+  counting_line:
+    line_y: 160
+    line_x_range: [100, 310]
+  roadway_roi_polygon:
+    - [170, 75]    # Top-left (median barrier at upper curve)
+    - [270, 75]    # Top-right (outer shoulder at upper curve)
+    - [315, 235]   # Bottom-right (outer lane / merge area)
+    - [85, 235]    # Bottom-left (concrete barrier base)
+    - [125, 140]   # Mid-left contour along concrete median
+
+models:
+  lstm:
+    input_dim: 1
+    hidden_dim: 16
+    num_layers: 1
+    output_dim: 5
+    dropout: 0.10
+  gru:
+    input_dim: 1
+    hidden_dim: 16
+    num_layers: 1
+    output_dim: 5
+    dropout: 0.10
+
+training:
+  optimizer: "Adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_function: "MSELoss"
+  max_epochs: 150
+  patience: 25
+
+outputs:
+  figures_dir: "outputs/figures"
+  tables_dir: "outputs/tables"
+  predictions_dir: "outputs/predictions"
+  models_dir: "models"
+
+checkpoints:
+  lstm_best: "models/lstm_best_model.pt"
+  gru_best: "models/gru_best_model.pt"
+  gru_lookback_l5: "models/gru_lookback_l5.pt"
+  gru_lookback_l20: "models/gru_lookback_l20.pt"
+  ablation_config_a: "models/ablation_config_a.pt"
+  ablation_config_b: "models/ablation_config_b.pt"
+  ablation_config_c: "models/ablation_config_c.pt"
+  ablation_config_d: "models/ablation_config_d.pt"
