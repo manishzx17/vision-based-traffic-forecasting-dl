@@ -1,0 +1,25 @@
+# Deep Learning & Sequence Forecasting
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Computer Vision & Multi-Object Tracking
+ultralytics>=8.0.0
+opencv-python>=4.7.0
+
+# Scientific Computing & Data Processing
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+scikit-learn>=1.2.0
+
+# Visualization & Reporting
+matplotlib>=3.7.0
+
+# Configuration Management
+pyyaml>=6.0
+
+# Interactive Notebook Environment
+ipython>=8.12.0
+
+# Testing
+pytest>=7.4.0

@@ -1,14 +1,46 @@
-.DS_Store
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Caches and temporary runtime files
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Jupyter Notebook checkpoints
 .ipynb_checkpoints/
-*.pyc
+*/.ipynb_checkpoints/*
 
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and Editor configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Raw large dataset media and pretrained weights
 archive/
-*.mat
 *.avi
-
+*.mat
 yolov8n.pt
-
-outputs/figures/
-outputs/predictions/
-models/
