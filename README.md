@@ -1,21 +1,17 @@
 # Vision-Based Traffic Flow Prediction Using YOLOv8 and LSTM
 
-This project implements an end-to-end machine learning pipeline that transforms raw highway surveillance video into structured traffic-state observations and forecasts multi-step traffic volume using recurrent neural networks and statistical baselines.
+This project implements an end-to-end pipeline transforming highway surveillance video into structured traffic observations and forecasting multi-step traffic-state vehicle counts using compact recurrent neural networks and statistical baselines under strict chronological evaluation.
 
-Overhead CCTV cameras provide an accessible alternative to expensive, spatially constrained inductive loops. We extract discrete traffic time series from surveillance clips using YOLOv8 detection, ByteTrack tracking, and region-of-interest (ROI) analysis, then evaluate whether compact LSTM and GRU models improve short-horizon forecasting over classical baselines under strict chronological evaluation.
+## Key Results
 
-## Key Components
-
-- **YOLOv8 Detection**: Vehicle localization (cars, buses, trucks) using pretrained `yolov8n.pt`.
-- **ByteTrack Tracking**: Tracklet persistence with per-clip state reset to prevent identity leakage.
-- **ROI Spatial Features**: Polygon-gated counting and visual roadway occupancy proxy estimation.
-- **Leakage-Safe Partitioning**: Chronological 70/16/14 split with target-anchored evaluation windows.
-- **Model Benchmarking**: Evaluating Persistence, Mean, and SMA against compact LSTM and GRU models.
-- **Diagnostic Analysis**: Feature ablation, horizon error drift, lookback sensitivity, and prediction intervals.
+- **Baselines**: SMA-3 achieved the lowest overall test MAE (0.6732) and RMSE (0.8814) among the evaluated models; SMA-5 had lowest $H_1$ MAE (0.2599).
+- **Recurrent Benchmark**: Compact GRU was the top recurrent model (Test MAE 0.7843 vs. 1.0181 for LSTM; $H_1$ MAE 0.2706).
+- **Ablation**: Count + HVR improved LSTM Test MAE to 0.9488; visual occupancy degraded performance (1.1565).
+- **Horizons & Lookback**: GRU error grew across horizons ($H_1$ 0.2706 to $H_5$ 1.6977); $L=10$ lookback was optimal.
 
 ## Project Scope
 
-This experimental undergraduate final-year BTech project evaluates short-horizon traffic forecasting from a single fixed-camera surveillance perspective across discrete video samples. It is not an enterprise traffic-management platform or a continuous real-time control system.
+This undergraduate BTech project evaluates short-horizon traffic forecasting from a single fixed camera across discrete video samples. It is not an enterprise platform or real-time control system.
 
 ## Research Question
 
@@ -25,133 +21,151 @@ This experimental undergraduate final-year BTech project evaluates short-horizon
 
 ```mermaid
 flowchart TD
-    A[Raw Video Clips] --> B[YOLOv8 Detection: yolov8n.pt]
+    A[Raw Video Clips] --> B[YOLOv8 Detection]
     B --> C[ByteTrack Tracking]
-    C --> D[ROI Masking & Virtual Gate]
-    D --> E[Traffic Features: Count, HVR, Occupancy]
-    E --> F[Discrete Time Series: N = 44]
-    F --> G[Chronological Split: 31 / 7 / 6]
-    G --> H1[Statistical Baselines: Mean, Persistence, SMA]
-    G --> H2[Recurrent Models: LSTM / GRU]
-    H1 & H2 --> I[Evaluation: Multi-Horizon Diagnostics & Ablation]
+    C --> D[ROI Virtual Gate]
+    D --> E[Features: Count, HVR, Occupancy]
+    E --> F[Discrete Series: N=44]
+    F --> G[Chronological Split: 31/7/6]
+    G --> H1[Baselines: Mean, Persistence, SMA]
+    G --> H2[Recurrent: LSTM / GRU]
+    H1 & H2 --> I[Evaluation & Ablation]
 ```
 
 ## Dataset
 
-Surveillance video comes from the **UCSD Traffic Dataset** (Interstate 5, San Diego):
-
-- **Structure**: 44 discrete clips from 17:00–20:00 on August 5, 2004 ($320 \times 240$ at 10 fps, ~5.2s / 52 frames each).
-- **Sampling**: Intermittent snapshots recorded every 4–5 minutes across an evening rush-hour transition (congested queueing to light traffic).
-- **Processing**: Clips are processed independently as discrete observations without synthetic concatenation.
+From the **Highway Traffic Videos Dataset**, containing fixed-camera highway surveillance clips from WSDOT Camera 052 on I-5 at S 188th St, Seattle, Washington:
+- **Structure**: 44 clips recorded August 5, 2004, 17:00–20:00 ($320 \times 240$ at 10 fps, ~5.2s / 52 frames each).
+- **Sampling**: Intermittent snapshots recorded every 4–5 minutes across an evening rush-hour transition.
+- **Processing**: Processed independently as discrete observations without synthetic interpolation.
 
 ## Computer Vision Pipeline
 
 - **Detection (YOLOv8)**: Pretrained `yolov8n.pt` detects cars, buses, and trucks ($\tau = 0.25$).
-- **Tracking (ByteTrack)**: Associates frame detections; tracker state strictly resets per clip to avoid identity leakage.
-- **ROI & Virtual Gate**: A 5-point polygon ($28{,}562$ px) isolates travel lanes, counting vehicles by centroid inclusion and checking southbound flow at $y = 160$ ($x \in [100, 310]$).
+- **Tracking (ByteTrack)**: Intra-clip tracking with per-clip reset enables line crossing diagnostics at $y = 160$ ($x \in [100, 310]$).
+- **ROI Isolation**: A 5-point polygon ($27{,}561$ px) isolates travel lanes. Target `total_vehicle_count` is the clip mean of ROI centroid inclusions; spatial occupancy is the union of vehicle bounding-box/ROI intersection areas divided by ROI area. Tracking assists line counting rather than overriding centroid inclusion.
+
+![Roadway ROI](outputs/figures/roadway_roi_polygon.png)
 
 ## Traffic-State Features
 
-Per clip, frame detections yield three summary features:
-
-1. **Total Vehicle Count ($y_t$)**: Mean detected vehicles per frame within the roadway ROI.
-2. **Heavy Vehicle Ratio (HVR)**: Proportion of trucks/buses to total detections: $(\bar{N}_{\text{truck}} + \bar{N}_{\text{bus}}) / \bar{N}_{\text{total}}$.
-3. **Spatial Occupancy Ratio**: Bounding-box intersection area with ROI divided by ROI area—serving as a visual pixel proxy, not physical density.
+Three clip-level features:
+1. **Total Vehicle Count ($y_t$)**: Mean detected vehicles per frame within roadway ROI (forecast target).
+2. **Heavy Vehicle Ratio (HVR)**: Proportion of trucks/buses: $(\bar{N}_{\text{truck}} + \bar{N}_{\text{bus}}) / \bar{N}_{\text{total}}$.
+3. **Spatial Occupancy Ratio**: Union of vehicle bounding-box/ROI intersection areas divided by ROI area (visual proxy).
 
 ## From Video to Time Series
 
-The pipeline maintains an explicit methodological separation:
-- **Intra-clip processing**: Frame-by-frame detection, tracking, and occupancy operate strictly within each ~5.2s clip.
-- **Inter-clip sequence**: The 44 clip summaries form a discrete chronological sequence ($k = 1, \dots, 44$). No synthetic interpolation is applied across the 4–5 minute inter-clip gaps.
+- **Intra-clip**: Detection, tracking, and occupancy operate strictly within each ~5.2s clip.
+- **Inter-clip**: The 44 clip summaries form a discrete sequence ($k = 1, \dots, 44$) without synthetic interpolation.
 
 ## Forecasting Methodology
 
-### Chronological Splitting & Target-Anchored Windows
-Data is split chronologically without shuffling: Train (obs 1–31, 70.5%), Validation (obs 32–38, 15.9%), and Test (obs 39–44, 13.6%). A `StandardScaler` is fitted strictly on the training partition.
-
-Under target-anchored windowing ($L = 10, H = 5$), target steps fall entirely within their designated partition, while lookback context warms up recurrent states. This produces 3 validation windows and 2 test windows (10 evaluated horizon points) shared identically across all models.
+### Chronological Splitting & Windows
+Chronological partition: Train (obs 1–31, 70.5%), Validation (obs 32–38, 15.9%), and Test (obs 39–44, 13.6%), with `StandardScaler` fitted on train. Target-anchored windows ($L=10, H=5$) ensure test steps fall strictly within the test partition (3 validation, 2 test windows; 10 horizon points).
 
 ### Models
 - **Baselines**: Historical Mean ($\bar{y}_{\text{train}} = 7.408$), Persistence ($y_{t+h} = y_t$), SMA-3, and SMA-5.
-- **Compact LSTM / GRU**: Single-layer models (16 hidden units, dropout 0.10; LSTM: 1,285 parameters, GRU: 1,029 parameters) projecting to 5 output steps via linear head. Trained with Adam ($\text{lr} = 0.001$), MSE loss, and early stopping (patience 25) on validation loss.
+- **Compact LSTM / GRU**: 1-layer recurrent networks (16 units, dropout 0.10; LSTM: 1,301 params, GRU: 997 params) trained with Adam ($\text{lr} = 0.01$, weight decay $10^{-4}$), MSE loss, max 150 epochs, and early stopping (patience 25).
+
+## Sample Input & Output
+
+Under target-anchored evaluation ($L=10, H=5$):
+- **Input**:
+  - Lookback window: 10 sampled traffic-state observations
+  - Input shape: `(1, 10, 1)`
+- **Output**:
+  - Forecast horizon: 5 future observations
+  - Output shape: `(1, 5)`
+  - Target: future vehicle-count sequence
 
 ## Experiments & Results
 
 ### Benchmark Comparison (Test Partition)
 
-Evaluated across identical test target windows ($M_{\text{test}} = 2$ windows, 10 horizon steps):
+Evaluated across test windows ($M_{\text{test}} = 2$, 10 horizon steps):
 
 | Model | Type | Params | Test MAE | Test RMSE | $H_1$ MAE | $H_5$ MAE |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | Historical Mean | Baseline | 0 | 6.9241 | 6.9722 | 7.4077 | 6.6742 |
-| Persistence | Baseline | 0 | 0.8603 | 1.0612 | 0.9215 | 0.4580 |
-| **SMA-3** | Baseline | 0 | **0.6732** | **0.8814** | **0.2712** | **1.1083** |
-| SMA-5 | Baseline | 0 | 0.6860 | 0.9070 | 0.2599 | 1.1196 |
-| Compact LSTM | Deep RNN | 1,285 | 1.0181 | 1.2587 | 0.8994 | 1.1813 |
-| Compact GRU | Deep RNN | 1,029 | 0.7843 | 1.1713 | 0.2706 | 1.6977 |
+| Persistence | Baseline | 0 | 0.8603 | 1.0612 | 0.9215 | **0.4580** |
+| SMA-3 | Baseline | 0 | **0.6732** | **0.8814** | 0.2712 | 1.1083 |
+| SMA-5 | Baseline | 0 | 0.6860 | 0.9070 | **0.2599** | 1.1196 |
+| Compact LSTM | Compact RNN | 1,301 | 1.0181 | 1.2587 | 0.8994 | 1.1813 |
+| Compact GRU | Compact RNN | 997 | 0.7843 | 1.1713 | 0.2706 | 1.6977 |
 
 ![Forecast Comparison](outputs/figures/gru_vs_lstm_vs_baselines.png)
 
 #### Key Findings
-- **Baseline Strength**: Statistical SMA-3 achieved the lowest test error (MAE 0.6732), outperforming both deep models—confirming that simple moving averages serve as strong regularizers on compact datasets ($N=44$).
-- **GRU vs. LSTM**: Compact GRU outperformed Compact LSTM (Test MAE 0.7843 vs. 1.0181; $H_1$ MAE 0.2706 vs. 0.8994), benefiting from fewer gating parameters (1,029 vs. 1,285).
-- **Horizon Drift**: Error compounds across multi-step horizons: Compact GRU degraded from $H_1$ MAE 0.2706 to $H_5$ MAE 1.6977 (+527%).
+- **Baselines**: SMA-3 achieved the lowest overall test MAE and RMSE among the evaluated models; moving averages act as strong regularizers on small sequences ($N=44$).
+- **GRU vs. LSTM**: The GRU used fewer parameters than the LSTM (997 vs. 1,301) and achieved lower test error on this compact dataset (Test MAE 0.7843 vs. 1.0181; $H_1$ MAE 0.2706); the small evaluation set limits broader conclusions.
+- **Horizon Behavior**: GRU error grew across horizons ($H_1$ 0.2706 to $H_5$ 1.6977); baselines were non-monotonic (Persistence reached $H_5$ MAE 0.4580).
 
 ### Feature Ablation (LSTM)
-Evaluating auxiliary visual inputs on Compact LSTM:
-- Adding vehicle composition (**Config B**: Count + HVR, Test MAE **0.9488**) improved over univariate count (**Config A**: Test MAE 1.0181).
-- Adding spatial occupancy alone (**Config C**: Test MAE 1.1565) or all features (**Config D**: Test MAE 1.0203) increased error due to feature over-specification on 31 training observations.
+Adding vehicle composition (**Config B**: Count + HVR, Test MAE **0.9488**) improved over count-only LSTM (**Config A**: 1.0181). The additional features did not improve performance under this configuration (**Config C**: 1.1565; **Config D**: 1.0203), suggesting that the small training set may limit the benefit of the higher-dimensional input.
 
 ### Lookback Robustness ($L \in \{5, 10, 20\}$)
-Evaluating historical context on Compact GRU confirmed $L=10$ as optimal:
-- **$L=5$** (22 windows): Val MAE 0.7941, Test MAE 1.0149
-- **$L=10$** (17 windows): Val MAE **0.5899**, Test MAE **0.7843**
-- **$L=20$** (7 windows): Val MAE 1.5461, Test MAE 1.5275
-
-Degradation at $L = 20$ is primarily driven by sample starvation: burn-in requirements on 31 training observations leave only 7 usable training sequences.
+$L=10$ was optimal (Val MAE 0.5899, Test MAE 0.7843) vs. $L=5$ (Test MAE 1.0149) and $L=20$ (Test MAE 1.5275), where sample starvation on 31 training observations degraded performance.
 
 ### Uncertainty & Transition Analysis
-- **Prediction Intervals**: Calibrated on validation residuals ($q_h = \max_{i \in \text{Val}} |e_{i, h}|$) and clipped at zero, empirical intervals achieved 100% coverage on $H_1$–$H_2$ and 50% on $H_4$–$H_5$ (60.0% overall test coverage, mean width 1.726).
-- **Transition Dynamics**: Compact GRU achieved MAE 0.5939 ($H_1$ MAE 0.0081) during stable flow, but error climbed to MAE 0.9747 ($H_5$ MAE 2.8221) during rapid transitions, indicating autoregressive response lag.
+- **Prediction Intervals**: Calibrated on validation residuals ($q_h = \max_{i \in \text{Val}} |e_{i, h}|$), empirical intervals achieved 60.0% test coverage (mean width 1.726; 100% on $H_1$–$H_2$, 50% on $H_4$–$H_5$).
+- **Transition Dynamics**: GRU MAE climbed from 0.5939 in stable flow to 0.9747 ($H_5$ MAE 2.8221) during rapid transitions.
 
 ![Prediction Intervals](outputs/figures/prediction_intervals.png)
+
+## Applications
+
+- **CCTV Traffic Monitoring**: Automated vehicle presence and class distribution logging.
+- **Short-Horizon State Forecasting**: Anticipating queue buildup during rush-hour transitions.
+- **Congestion Analysis**: Tracking bottleneck onset and dissipation via visual state proxies.
+- **Intelligent Transportation Systems (ITS)**: Lightweight decision support for advisory signals.
 
 ## Repository Structure
 
 ```text
-traffic-flow-yolo-lstm/
-├── configs/          # Pipeline configuration (config.yaml)
-├── src/              # Core modules: detection, tracking, preprocessing, models
-├── notebooks/        # 16 research notebooks (EDA to sensitivity analysis)
-├── models/           # Trained PyTorch model checkpoints (.pt)
-├── outputs/          # Benchmark tables, diagnostic figures, predictions
-├── tests/            # Automated test suite (pytest)
+vision-based-traffic-forecasting-dl/
+├── configs/          # Configuration (config.yaml)
+├── src/              # Detection, tracking, preprocessing, models
+├── notebooks/        # 16 research notebooks across 4 stages
+├── models/           # Checkpoints (.pt)
+├── outputs/          # Benchmark tables, figures, predictions
+├── tests/            # Test suite (pytest)
 ├── requirements.txt  # Dependencies
 └── README.md
 ```
 
-## Reproducibility
+## Reproducibility & Workflow
 
 ```bash
-# Clone repository and install dependencies
 git clone https://github.com/manishzx17/vision-based-traffic-forecasting-dl.git
 cd vision-based-traffic-forecasting-dl
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Run automated smoke tests
 pytest tests/test_smoke.py -v
 ```
 
+The 16 notebooks cover 4 stages: CV extraction (`01`–`04`), series construction (`05`–`07`), forecasting (`08`–`11`), and evaluation (`12`–`16`). Raw clips reside in `archive/video/` (git-ignored); precomputed tables and checkpoints are tracked for immediate execution.
+
 ## Limitations & Future Work
 
-- **Sample Size**: $N = 44$ discrete observations limits sequence length and statistical power.
-- **Intermittent Sampling**: Video clips represent sampled snapshots every 4–5 minutes rather than continuous video feeds.
-- **Monocular Viewpoint**: Spatial occupancy is calculated in 2D image coordinates without inverse perspective mapping to ground coordinates.
-- **Single Location**: Evaluated on one fixed CCTV perspective along Interstate 5 without cross-camera validation.
+- **Sample Size**: $N = 44$ discrete observations limits sequence length.
+- **Intermittent Sampling**: 4–5 minute snapshot intervals rather than continuous streams.
+- **Monocular Viewpoint**: Spatial occupancy is a 2D image proxy without perspective homography.
+- **Single Location**: Evaluated on one fixed CCTV perspective without cross-camera validation.
 
-**Future Work**: Continuous 24-hour video feeds for diurnal cycles, bird's-eye-view (BEV) homography for physical density ($\text{veh/km/lane}$), and spatio-temporal graph neural networks across multi-camera networks.
+**Future Work**: 24-hour continuous feeds, inverse perspective mapping for physical density ($\text{veh/km/lane}$), and spatio-temporal graph neural networks across camera networks.
 
 ## Technologies
 
 - **Stack**: Python 3.9+, PyTorch, Ultralytics YOLOv8, OpenCV, ByteTrack, NumPy, pandas, scikit-learn, SciPy, Matplotlib, PyYAML, pytest
+
+## References
+
+- **Dataset**: Highway Traffic Videos Dataset (WSDOT Camera 052, Seattle, WA; https://www.kaggle.com/datasets/aryashah2k/highway-traffic-videos-dataset).
+- **Detection**: Ultralytics YOLOv8 (https://github.com/ultralytics/ultralytics).
+- **Tracking**: ByteTrack (Zhang et al., ECCV 2022).
+- **Framework**: PyTorch (https://pytorch.org).
+
+## Summary & Key Takeaways
+
+This project demonstrates an end-to-end pipeline bridging vision-based vehicle perception and discrete sequence forecasting under chronological evaluation. Benchmarking compact recurrent neural networks against statistical baselines confirms that simple baselines serve as strong regularizers on compact sequence datasets. Systematic ablation, lookback sensitivity, and calibrated prediction intervals reinforce disciplined diagnostic evaluation under real-world camera constraints.
